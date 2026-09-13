@@ -1,13 +1,23 @@
 #include "mesh_node.h"
-#include<iostream>
+#include <iostream>
+#include <cstdio>
 #include <cstring>
 #include <algorithm>
 
-MeshNode::MeshNode(uint16_t id) : node_id(id), current_seq(0), last_telemetry_ms(0) {}
+#if defined(ARDUINO) || defined(ESP32)
+#include <Arduino.h>
+#endif
+
+MeshNode::MeshNode(uint16_t id) 
+    : node_id(id), current_seq(0), last_telemetry_ms(0),
+      packets_sent(0), packets_received(0), packets_dropped(0) {}
 
 void MeshNode::init() {
     routing_table.clear();
     seen_packets.clear();
+    packets_sent = 0;
+    packets_received = 0;
+    packets_dropped = 0;
 }
 
 bool MeshNode::is_duplicate(uint16_t seq) {
@@ -31,13 +41,16 @@ void MeshNode::update_peer(uint16_t sender_id, int8_t rssi, uint8_t hops) {
 void MeshNode::handle_received_packet(const uint8_t* raw_data, size_t len, int8_t rssi) {
     MeshPacket packet;
     if (!deserialize_packet(raw_data, len, packet)) {
+        packets_dropped++;
         return;
     }
 
     if (is_duplicate(packet.header.sequence_num)) {
+        packets_dropped++;
         return;
     }
 
+    packets_received++;
     update_peer(packet.header.sender_id, rssi, packet.header.ttl);
 
     if (packet.header.receiver_id == node_id || packet.header.receiver_id == 0xFFFF) {
@@ -46,7 +59,10 @@ void MeshNode::handle_received_packet(const uint8_t* raw_data, size_t len, int8_
 }
 
 bool MeshNode::broadcast_payload(PacketType type, const uint8_t* data, uint8_t len) {
-    if (len > MAX_PAYLOAD_SIZE) return false;
+    if (len > MAX_PAYLOAD_SIZE) {
+        packets_dropped++;
+        return false;
+    }
 
     MeshPacket packet;
     packet.header.magic = PROTOCOL_MAGIC_BYTE;
@@ -61,11 +77,15 @@ bool MeshNode::broadcast_payload(PacketType type, const uint8_t* data, uint8_t l
         std::memcpy(packet.payload, data, len);
     }
 
+    packets_sent++;
     return true;
 }
 
 bool MeshNode::send_to_node(uint16_t target_id, PacketType type, const uint8_t* data, uint8_t len) {
-    if (len > MAX_PAYLOAD_SIZE) return false;
+    if (len > MAX_PAYLOAD_SIZE) {
+        packets_dropped++;
+        return false;
+    }
 
     MeshPacket packet;
     packet.header.magic = PROTOCOL_MAGIC_BYTE;
@@ -80,6 +100,7 @@ bool MeshNode::send_to_node(uint16_t target_id, PacketType type, const uint8_t* 
         std::memcpy(packet.payload, data, len);
     }
 
+    packets_sent++;
     return true;
 }
 
@@ -97,13 +118,34 @@ const std::unordered_map<uint16_t, PeerInfo>& MeshNode::get_routing_table() cons
     return routing_table;
 }
 
-void MeshNode::print_telemetry(uint32_t current_time_ms, uint32_t interval_ms){
-    if ((current_time_ms - last_telemetry_ms) >= interval_ms){
-        std::cout<<"[Telemetry] Node: "<< node_id
-        << " | Current Sequence : " <<current_seq 
-        << " | Seen Packets: " << seen_packets.size() 
-        << " | Routing Table Size: " << routing_table.size() << std::endl;
-
+void MeshNode::print_telemetry(uint32_t current_time_ms, uint32_t interval_ms) {
+    if ((current_time_ms - last_telemetry_ms) >= interval_ms) {
         last_telemetry_ms = current_time_ms;
+
+        uint32_t free_ram_kb = 0;
+#if defined(ARDUINO) || defined(ESP32)
+        free_ram_kb = ESP.getFreeHeap() / 1024;
+#else
+        free_ram_kb = 256; // Simulated RAM footprint for desktop host
+#endif
+
+        uint32_t total = packets_sent + packets_received + packets_dropped;
+        float loss_percent = (total > 0) ? (static_cast<float>(packets_dropped) / static_cast<float>(total) * 100.0f) : 0.0f;
+
+#if defined(ARDUINO) || defined(ESP32)
+        Serial.printf("[TELEMETRY] Free RAM: %u KB | Active Nodes: %u | Sent: %u | Recv: %u | Loss: %.1f%%\n",
+            free_ram_kb,
+            static_cast<unsigned int>(routing_table.size()),
+            packets_sent,
+            packets_received,
+            loss_percent);
+#else
+        std::printf("[TELEMETRY] Free RAM: %u KB | Active Nodes: %u | Sent: %u | Recv: %u | Loss: %.1f%%\n",
+            free_ram_kb,
+            static_cast<unsigned int>(routing_table.size()),
+            packets_sent,
+            packets_received,
+            loss_percent);
+#endif
     }
 }

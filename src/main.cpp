@@ -46,11 +46,15 @@ int main() {
         return 1;
     }
 
-    std::cout <<"\n[Test] Simulating Node Telemetry over Time... " << std::endl;
+    std::cout << "\n[Test] Simulating Node Telemetry over Time... " << std::endl;
     MeshNode test_node(0x9999);
     test_node.init();
 
-    for(int simulated_time_ms = 0; simulated_time_ms <= 15000; simulated_time_ms += 1000){
+    const uint8_t sample_beacon[] = "PING";
+    for (int simulated_time_ms = 0; simulated_time_ms <= 15000; simulated_time_ms += 1000) {
+        if (simulated_time_ms % 2000 == 0) {
+            test_node.broadcast_payload(PacketType::BEACON, sample_beacon, sizeof(sample_beacon));
+        }
         test_node.print_telemetry(simulated_time_ms, 5000);
     }
 
