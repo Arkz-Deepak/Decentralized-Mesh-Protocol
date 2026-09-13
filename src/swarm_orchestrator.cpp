@@ -11,7 +11,7 @@ void SwarmOrchestrator::init() {
 
 void SwarmOrchestrator::assign_task(uint16_t task_id, uint8_t priority) {
     SwarmTask task{task_id, priority, local_node_id, false};
-    task_queue.push_back(task);
+    task_queue.enqueue(task);
 }
 
 void SwarmOrchestrator::process_incoming_task(const uint8_t* payload, uint8_t len) {
@@ -22,18 +22,26 @@ void SwarmOrchestrator::process_incoming_task(const uint8_t* payload, uint8_t le
     std::memcpy(&t_id, payload, sizeof(uint16_t));
     std::memcpy(&prio, payload + sizeof(uint16_t), sizeof(uint8_t));
 
-    task_queue.push_back({t_id, prio, 0xFFFF, false});
+    task_queue.enqueue({t_id, prio, 0xFFFF, false});
 }
 
 void SwarmOrchestrator::execute_orchestration_cycle(uint32_t current_time_ms) {
     routing_engine.prune_stale_routes(current_time_ms);
-    for (auto& task : task_queue) {
-        if (!task.completed) {
-            task.completed = true;
+    
+    // Process exactly the number of tasks currently in the queue
+    size_t num_tasks = task_queue.size();
+    
+    for (size_t i = 0; i < num_tasks; i++) {
+        SwarmTask current_task;
+        if (task_queue.dequeue(current_task)) {
+            if (!current_task.completed) {
+                current_task.completed = true;
+            }
+            task_queue.enqueue(current_task);
         }
     }
 }
 
-const std::vector<SwarmTask>& SwarmOrchestrator::get_tasks() const {
+const CircularBuffer<SwarmTask, MAX_TASK_QUEUE_SIZE>& SwarmOrchestrator::get_tasks() const {
     return task_queue;
 }

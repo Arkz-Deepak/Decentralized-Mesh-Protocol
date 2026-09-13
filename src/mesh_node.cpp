@@ -7,16 +7,18 @@ MeshNode::MeshNode(uint16_t id) : node_id(id), current_seq(0) {}
 void MeshNode::init() {
     routing_table.clear();
     seen_packets.clear();
+    rx_buffer.clear();
 }
 
 bool MeshNode::is_duplicate(uint16_t seq) {
-    if (std::find(seen_packets.begin(), seen_packets.end(), seq) != seen_packets.end()) {
+    if (seen_packets.contains(seq)) {
         return true;
     }
-    if (seen_packets.size() > 50) {
-        seen_packets.erase(seen_packets.begin());
+    if (seen_packets.is_full()) {
+        uint16_t dropped_packet;
+        seen_packets.dequeue(dropped_packet);
     }
-    seen_packets.push_back(seq);
+    seen_packets.enqueue(seq);
     return false;
 }
 
@@ -40,7 +42,11 @@ void MeshNode::handle_received_packet(const uint8_t* raw_data, size_t len, int8_
     update_peer(packet.header.sender_id, rssi, packet.header.ttl);
 
     if (packet.header.receiver_id == node_id || packet.header.receiver_id == 0xFFFF) {
-        // Core payload processing hook for swarm intelligence
+        if (rx_buffer.is_full()) {
+            MeshPacket dropped;
+            rx_buffer.dequeue(dropped); // Drop oldest packet on overflow
+        }
+        rx_buffer.enqueue(packet);
     }
 }
 
@@ -80,6 +86,10 @@ bool MeshNode::send_to_node(uint16_t target_id, PacketType type, const uint8_t* 
     }
 
     return true;
+}
+
+bool MeshNode::get_next_rx_packet(MeshPacket& out_packet) {
+    return rx_buffer.dequeue(out_packet);
 }
 
 void MeshNode::cleanup_dead_peers(uint32_t timeout_ms, uint32_t current_time_ms) {
