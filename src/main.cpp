@@ -2,6 +2,7 @@
 #include <cstring>
 #include "swarm_orchestrator.h"
 #include "security_engine.h"
+#include "mesh_node.h"
 
 int main() {
     std::cout << ">>> DECENTRALIZED SWARM OS / MESH CORE INITIALIZED <<<" << std::endl;
@@ -44,6 +45,43 @@ int main() {
         std::cerr << "[SECURITY FAIL] Decrypted payload mismatch!" << std::endl;
         return 1;
     }
+
+    // =========================================================================
+    // 3. Self-Healing Heartbeat & Dynamic Node Timeout Verification (Issue #4)
+    // =========================================================================
+    std::cout << "\n[SELF-HEALING] Verifying Dynamic Heartbeat & Node Timeout..." << std::endl;
+    MeshNode swarm_node(0x1001);
+    swarm_node.init();
+
+    // Step 3a: Register neighbor Node 0x2002 at timestamp 1000 ms
+    MeshPacket beacon_pkt;
+    beacon_pkt.header.magic = PROTOCOL_MAGIC_BYTE;
+    beacon_pkt.header.type = static_cast<uint8_t>(PacketType::BEACON);
+    beacon_pkt.header.sender_id = 0x2002;
+    beacon_pkt.header.receiver_id = 0xFFFF;
+    beacon_pkt.header.sequence_num = 1;
+    beacon_pkt.header.ttl = 10;
+    beacon_pkt.header.payload_len = 0;
+
+    uint8_t raw_buf[256];
+    size_t raw_len = 0;
+    serialize_packet(beacon_pkt, raw_buf, raw_len);
+    swarm_node.handle_received_packet(raw_buf, raw_len, -70, 1000);
+    std::cout << "[SELF-HEALING] Neighbor 0x2002 registered. Routing table size: "
+              << swarm_node.get_routing_table().size() << std::endl;
+
+    // Step 3b: Verify periodic non-blocking heartbeat broadcast (2000 ms interval)
+    if (!swarm_node.broadcast_heartbeat(1500)) {
+        std::cout << "[SELF-HEALING] Heartbeat suppressed at 1500 ms (< 2000 ms interval)." << std::endl;
+    }
+    if (swarm_node.broadcast_heartbeat(2500)) {
+        std::cout << "[SELF-HEALING] Heartbeat successfully broadcasted at 2500 ms (>= 2000 ms interval)." << std::endl;
+    }
+
+    // Step 3c: Stale node cleanup at 8000 ms (elapsed: 7000 ms > 6000 ms threshold)
+    swarm_node.cleanup_dead_peers(6000, 8000);
+    std::cout << "[SELF-HEALING] Post-purge routing table size: "
+              << swarm_node.get_routing_table().size() << std::endl;
 
     std::cout << "\n>>> SYSTEM CORE & SECURITY LAYER FULLY OPERATIONAL <<<" << std::endl;
     return 0;
